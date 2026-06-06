@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pembayaran QRIS — Hamizan Gholib</title>
+<style>
+  :root {
+    --primary: #2563eb;
+    --bg: #ffffff;
+    --surface: #f8fafc;
+    --border: #e2e8f0;
+    --text: #0f172a;
+    --muted: #64748b;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    background: var(--surface); color: var(--text);
+  }
+  .container { max-width: 480px; margin: 0 auto; padding: 20px 16px 40px; }
+  .card {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 20px; margin-bottom: 16px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  }
+  h1 { font-size: 1.25rem; margin: 0 0 4px; text-align: center; }
+  .merchant { text-align: center; color: var(--muted); font-size: 0.9rem; margin-bottom: 4px; }
+  .nmid { text-align: center; color: var(--muted); font-size: 0.75rem; margin-bottom: 16px; }
+  .qr-wrap {
+    display: flex; justify-content: center; align-items: center;
+    background: #fff; padding: 14px; border-radius: 10px;
+    border: 1px solid var(--border); min-height: 280px;
+  }
+  #qr-canvas { width: 100%; max-width: 320px; height: auto; image-rendering: pixelated; }
+  .qr-placeholder { color: var(--muted); font-size: 0.9rem; text-align: center; padding: 40px 20px; }
+  .qr-amount {
+    text-align: center; font-size: 1.4rem; font-weight: 700;
+    color: var(--primary); margin-top: 12px;
+  }
+  .qr-note { text-align: center; color: var(--muted); font-size: 0.85rem; margin-top: 4px; }
+  label { display: block; font-size: 0.9rem; font-weight: 600; margin-bottom: 6px; }
+  .input-group { margin-bottom: 14px; }
+  .input-prefix { position: relative; }
+  .input-prefix span {
+    position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
+    color: var(--muted); font-weight: 600; pointer-events: none;
+  }
+  input[type="text"], textarea {
+    width: 100%; border: 1.5px solid var(--border); border-radius: 10px;
+    padding: 12px 14px; font-size: 1rem; font-family: inherit;
+    background: #fff; color: var(--text); transition: border-color 0.15s;
+  }
+  .input-prefix input { padding-left: 38px; }
+  input:focus, textarea:focus { outline: none; border-color: var(--primary); }
+  textarea { resize: vertical; min-height: 70px; }
+  button {
+    width: 100%; border: none; border-radius: 10px; padding: 14px;
+    font-size: 1rem; font-weight: 600; cursor: pointer; font-family: inherit;
+    transition: background 0.15s, transform 0.05s;
+  }
+  button:active { transform: scale(0.98); }
+  .btn-primary { background: var(--primary); color: #fff; margin-bottom: 10px; }
+  .btn-wa { background: #25D366; color: #fff; margin-bottom: 10px; }
+  .btn-secondary { background: #fff; color: var(--text); border: 1.5px solid var(--border); }
+  .error { color: #dc2626; font-size: 0.85rem; margin-bottom: 10px; min-height: 1em; }
+  .toast {
+    position: fixed; bottom: 24px; left: 50%;
+    transform: translateX(-50%) translateY(100px);
+    background: #0f172a; color: #fff; padding: 12px 20px; border-radius: 999px;
+    font-size: 0.9rem; opacity: 0; transition: transform 0.25s, opacity 0.25s;
+    pointer-events: none; z-index: 10;
+  }
+  .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+  .actions-after-qr { display: none; }
+  .actions-after-qr.shown { display: block; }
+  .footer { text-align: center; color: var(--muted); font-size: 0.8rem; margin-top: 8px; }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <h1>Pembayaran QRIS</h1>
+      <div class="merchant">digikom HG, Digital &amp; Kreatif</div>
+      <div class="nmid">NMID: ID10254525086540 &middot; A01</div>
+
+      <div class="qr-wrap" id="qr-wrap">
+        <div class="qr-placeholder" id="qr-placeholder">
+          Masukkan nominal pembayaran di bawah, lalu klik <b>Generate QRIS</b>.
+          QR yang muncul sudah berisi nominal — saat dipindai, jumlahnya otomatis terisi.
+        </div>
+        <canvas id="qr-canvas" style="display:none"></canvas>
+      </div>
+      <div class="qr-amount" id="qr-amount" style="display:none"></div>
+      <div class="qr-note" id="qr-note"></div>
+    </div>
+
+    <div class="card">
+      <div class="input-group">
+        <label for="amount">Jumlah Pembayaran</label>
+        <div class="input-prefix">
+          <span>Rp</span>
+          <input type="text" id="amount" inputmode="numeric" placeholder="0" autocomplete="off" />
+        </div>
+      </div>
+      <div class="input-group">
+        <label for="note">Keterangan (opsional)</label>
+        <textarea id="note" placeholder="Misal: Pembayaran makan siang"></textarea>
+      </div>
+      <div class="error" id="error"></div>
+      <button class="btn-primary" id="btn-generate">⚡ Generate QRIS</button>
+
+      <div class="actions-after-qr" id="actions-after-qr">
+        <button class="btn-wa" id="btn-share">📲 Bagikan ke WhatsApp</button>
+        <button class="btn-secondary" id="btn-copy">📋 Salin Pesan</button>
+      </div>
+    </div>
+
+    <div class="footer">Satu QRIS untuk Semua</div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<!--
+  =====================================================================
+  QR Code Generator — by Kazuhiko Arase (MIT License)
+  https://github.com/kazuhikoarase/qrcode-generator
+  Inlined untuk menjaga single-file & offline.
+  =====================================================================
+-->
+<script>
+// QR Code Generator — based on Kazuhiko Arase's qrcode-generator (MIT License).
+// Readable rewrite for reliability.
+var qrcode = (function() {
+  var ECLevel = { L: 1, M: 0, Q: 3, H: 2 };
+
+  // --- Galois Field GF(256) tables ---
+  var EXP_TABLE = new Array(256), LOG_TABLE = new Array(256);
+  (function() {
+    for (var i = 0; i < 8; i++) EXP_TABLE[i] = 1 << i;
+    for (var i = 8; i < 256; i++) EXP_TABLE[i] = EXP_TABLE[i-4] ^ EXP_TABLE[i-5] ^ EXP_TABLE[i-6] ^ EXP_TABLE[i-8];
+    for (var i = 0; i < 255; i++) LOG_TABLE[EXP_TABLE[i]] = i;
+  })();
+  function glog(n) { if (n < 1) throw new Error("glog(" + n + ")"); return LOG_TABLE[n]; }
+  function gexp(n) { while (n < 0) n += 255; while (n >= 256) n -= 255; return EXP_TABLE[n]; }
+
+  // --- Polynomial ---
+  function Poly(num, shift) {
+    if (num.length === undefined) throw new Error(num.length + "/" + shift);
+    var offset = 0;
+    while (offset < num.length && num[offset] === 0) offset++;
+    var data = new Array(num.length - offset + shift);
+    for (var i = 0; i < num.length - offset; i++) data[i] = num[i + offset];
+    return {
+      getAt: function(i) { return data[i]; },
+      getLength: function() { return data.length; },
+      multiply: function(e) {
+        var out = new Array(this.getLength() + e.getLength() - 1);
+        for (var i = 0; i < this.getLength(); i++)
+          for (var j = 0; j < e.getLength(); j++)
+            out[i+j] = (out[i+j] || 0) ^ gexp(glog(this.getAt(i)) + glog(e.getAt(j)));
+        return Poly(out, 0);
+      },
+      mod: function(e) {
+        if (this.getLength() - e.getLength() < 0) return this;
+        var ratio = glog(this.getAt(0)) - glog(e.getAt(0));
+        var out = new Array(this.getLength());
+        for (var i = 0; i < this.getLength(); i++) out[i] = this.getAt(i);
+        for (var i = 0; i < e.getLength(); i++) out[i] ^= gexp(glog(e.getAt(i)) + ratio);
+        return Poly(out, 0).mod(e);
+      }
+    };
+  }
+
+  // --- BCH / pattern positions / mask functions / length-in-bits / lost-point ---
+  var PATTERN_POSITIONS = [
+    [], [6,18], [6,22], [6,26], [6,30], [6,34], [6,22,38], [6,24,42], [6,26,46],
+    [6,28,50], [6,30,54], [6,32,58], [6,34,62], [6,26,46,66], [6,26,48,70],
+    [6,26,50,74], [6,30,54,78], [6,30,56,82], [6,30,58,86], [6,34,62,90],
+    [6,28,50,72,94], [6,26,50,74,98], [6,30,54,78,102], [6,28,54,80,106],
+    [6,32,58,84,110], [6,30,58,86,114], [6,34,62,90,118], [6,26,50,74,98,122],
+    [6,30,54,78,102,126], [6,26,52,78,104,130], [6,30,56,82,108,134],
+    [6,34,60,86,112,138], [6,30,58,86,114,142], [6,34,62,90,118,146],
+    [6,30,54,78,102,126,150], [6,24,50,76,102,128,154], [6,28,54,80,106,132,158],
+    [6,32,58,84,110,136,162], [6,26,54,82,110,138,166], [6,30,58,86,114,142,170]
+  ];
+  function digitNum(n) { var d = 0; while (n !== 0) { d++; n >>>= 1; } return d; }
+  function getBCHTypeInfo(d) {
+    var v = d << 10;
+    while (digitNum(v) - digitNum(0x537) >= 0) v ^= 0x537 << (digitNum(v) - digitNum(0x537));
+    return ((d << 10) | v) ^ 0x5412;
+  }
+  function getBCHTypeNumber(d) {
+    var v = d << 12;
+    while (digitNum(v) - digitNum(0x1F25) >= 0) v ^= 0x1F25 << (digitNum(v) - digitNum(0x1F25));
+    return (d << 12) | v;
+  }
+  function getPatternPosition(typeNumber) { return PATTERN_POSITIONS[typeNumber - 1]; }
+  function getMaskFunction(maskPattern) {
+    switch (maskPattern) {
+      case 0: return function(i,j) { return (i+j) % 2 === 0; };
+      case 1: return function(i,j) { return i % 2 === 0; };
+      case 2: return function(i,j) { return j % 3 === 0; };
+      case 3: return function(i,j) { return (i+j) % 3 === 0; };
+      case 4: return function(i,j) { return (Math.floor(i/2) + Math.floor(j/3)) % 2 === 0; };
+      case 5: return function(i,j) { return (i*j) % 2 + (i*j) % 3 === 0; };
+      case 6: return function(i,j) { return ((i*j) % 2 + (i*j) % 3) % 2 === 0; };
+      case 7: return function(i,j) { return ((i*j) % 3 + (i+j) % 2) % 2 === 0; };
+      default: throw new Error("bad maskPattern: " + maskPattern);
+    }
+  }
+  function getErrorCorrectPolynomial(errorCorrectLength) {
+    var a = Poly([1], 0);
+    for (var i = 0; i < errorCorrectLength; i++) a = a.multiply(Poly([1, gexp(i)], 0));
+    return a;
+  }
+  function getLengthInBits(mode, type) {
+    // mode 4 = 8-bit byte
+    if (1 <= type && type < 10) { if (mode === 4) return 8; }
+    else if (type < 27)         { if (mode === 4) return 16; }
+    else if (type < 41)         { if (mode === 4) return 16; }
+    else throw new Error("type: " + type);
+    throw new Error("mode: " + mode + " / type: " + type);
+  }
+  function getLostPoint(qr) {
+    var n = qr.getModuleCount(), lost = 0;
+    for (var r = 0; r < n; r++) for (var c = 0; c < n; c++) {
+      var same = 0, dark = qr.isDark(r, c);
+      for (var dr = -1; dr <= 1; dr++) if (r+dr >= 0 && r+dr < n)
+        for (var dc = -1; dc <= 1; dc++) {
+          if (c+dc < 0 || c+dc >= n) continue;
+          if (dr === 0 && dc === 0) continue;
+          if (dark === qr.isDark(r+dr, c+dc)) same++;
+        }
+      if (same > 5) lost += 3 + same - 5;
+    }
+    for (var r = 0; r < n-1; r++) for (var c = 0; c < n-1; c++) {
+      var cnt = 0;
+      if (qr.isDark(r,c)) cnt++; if (qr.isDark(r+1,c)) cnt++;
+      if (qr.isDark(r,c+1)) cnt++; if (qr.isDark(r+1,c+1)) cnt++;
+      if (cnt === 0 || cnt === 4) lost += 3;
+    }
+    for (var r = 0; r < n; r++) for (var c = 0; c < n-6; c++) {
+      if (qr.isDark(r,c) && !qr.isDark(r,c+1) && qr.isDark(r,c+2) && qr.isDark(r,c+3) && qr.isDark(r,c+4) && !qr.isDark(r,c+5) && qr.isDark(r,c+6)) lost += 40;
+    }
+    for (var c = 0; c < n; c++) for (var r = 0; r < n-6; r++) {
+      if (qr.isDark(r,c) && !qr.isDark(r+1,c) && qr.isDark(r+2,c) && qr.isDark(r+3,c) && qr.isDark(r+4,c) && !qr.isDark(r+5,c) && qr.isDark(r+6,c)) lost += 40;
+    }
+    var darkCount = 0;
+    for (var c = 0; c < n; c++) for (var r = 0; r < n; r++) if (qr.isDark(r,c)) darkCount++;
+    return lost + Math.abs(100 * darkCount / n / n - 50) / 5 * 10;
+  }
+
+  // --- RS block table ---
+  var RS_BLOCK_TABLE = [
+    [1,26,19],[1,26,16],[1,26,13],[1,26,9],[1,44,34],[1,44,28],[1,44,22],[1,44,16],
+    [1,70,55],[1,70,44],[2,35,17],[2,35,13],[1,100,80],[2,50,32],[2,50,24],[4,25,9],
+    [1,134,108],[2,67,43],[2,33,15,2,34,16],[2,33,11,2,34,12],[2,86,68],[4,43,27],[4,43,19],[4,43,15],
+    [2,98,78],[4,49,31],[2,32,14,4,33,15],[4,39,13,1,40,14],[2,121,97],[2,60,38,2,61,39],[4,40,18,2,41,19],[4,40,14,2,41,15],
+    [2,146,116],[3,58,36,2,59,37],[4,36,16,4,37,17],[4,36,12,4,37,13],[2,86,68,2,87,69],[4,69,43,1,70,44],[6,43,19,2,44,20],[6,43,15,2,44,16],
+    [4,101,81],[1,80,50,4,81,51],[4,50,22,4,51,23],[3,36,12,8,37,13],[2,116,92,2,117,93],[6,58,36,2,59,37],[4,46,20,6,47,21],[7,42,14,4,43,15],
+    [4,133,107],[8,59,37,1,60,38],[8,44,20,4,45,21],[12,33,11,4,34,12],[3,145,115,1,146,116],[4,64,40,5,65,41],[11,36,16,5,37,17],[11,36,12,5,37,13],
+    [5,109,87,1,110,88],[5,65,41,5,66,42],[5,54,24,7,55,25],[11,36,12,7,37,13],[5,122,98,1,123,99],[7,73,45,3,74,46],[15,43,19,2,44,20],[3,45,15,13,46,16],
+    [1,135,107,5,136,108],[10,74,46,1,75,47],[1,50,22,15,51,23],[2,42,14,17,43,15],[5,150,120,1,151,121],[9,69,43,4,70,44],[17,50,22,1,51,23],[2,42,14,19,43,15],
+    [3,141,113,4,142,114],[3,70,44,11,71,45],[17,47,21,4,48,22],[9,39,13,16,40,14],[3,135,107,5,136,108],[3,67,41,13,68,42],[15,54,24,5,55,25],[15,43,15,10,44,16],
+    [4,144,116,4,145,117],[17,68,42],[17,50,22,6,51,23],[19,46,16,6,47,17],[2,139,111,7,140,112],[17,74,46],[7,54,24,16,55,25],[34,37,13],
+    [4,151,121,5,152,122],[4,75,47,14,76,48],[11,54,24,14,55,25],[16,45,15,14,46,16],[6,147,117,4,148,118],[6,73,45,14,74,46],[11,54,24,16,55,25],[30,46,16,2,47,17],
+    [8,132,106,4,133,107],[8,75,47,13,76,48],[7,54,24,22,55,25],[22,45,15,13,46,16],[10,142,114,2,143,115],[19,74,46,4,75,47],[28,50,22,6,51,23],[33,46,16,4,47,17],
+    [8,152,122,4,153,123],[22,73,45,3,74,46],[8,53,23,26,54,24],[12,45,15,28,46,16],[3,147,117,10,148,118],[3,73,45,23,74,46],[4,54,24,31,55,25],[11,45,15,31,46,16],
+    [7,146,116,7,147,117],[21,73,45,7,74,46],[1,53,23,37,54,24],[19,45,15,26,46,16],[5,145,115,10,146,116],[19,75,47,10,76,48],[15,54,24,25,55,25],[23,45,15,25,46,16],
+    [13,145,115,3,146,116],[2,74,46,29,75,47],[42,54,24,1,55,25],[23,45,15,28,46,16],[17,145,115],[10,74,46,23,75,47],[10,54,24,35,55,25],[19,45,15,35,46,16],
+    [17,145,115,1,146,116],[14,74,46,21,75,47],[29,54,24,19,55,25],[11,45,15,46,46,16],[13,145,115,6,146,116],[14,74,46,23,75,47],[44,54,24,7,55,25],[59,46,16,1,47,17],
+    [12,151,121,7,152,122],[12,75,47,26,76,48],[39,54,24,14,55,25],[22,45,15,41,46,16],[6,151,121,14,152,122],[6,75,47,34,76,48],[46,54,24,10,55,25],[2,45,15,64,46,16],
+    [17,152,122,4,153,123],[29,74,46,14,75,47],[49,54,24,10,55,25],[24,45,15,46,46,16],[4,152,122,18,153,123],[13,74,46,32,75,47],[48,54,24,14,55,25],[42,45,15,32,46,16],
+    [20,147,117,4,148,118],[40,75,47,7,76,48],[43,54,24,22,55,25],[10,45,15,67,46,16],[19,148,118,6,149,119],[18,75,47,31,76,48],[34,54,24,34,55,25],[20,45,15,61,46,16]
+  ];
+  function RSBlock(totalCount, dataCount) { return { totalCount: totalCount, dataCount: dataCount }; }
+  function getRSBlockTable(typeNumber, ecLevel) {
+    switch (ecLevel) {
+      case ECLevel.L: return RS_BLOCK_TABLE[(typeNumber-1)*4 + 0];
+      case ECLevel.M: return RS_BLOCK_TABLE[(typeNumber-1)*4 + 1];
+      case ECLevel.Q: return RS_BLOCK_TABLE[(typeNumber-1)*4 + 2];
+      case ECLevel.H: return RS_BLOCK_TABLE[(typeNumber-1)*4 + 3];
+      default: return undefined;
+    }
+  }
+  function getRSBlocks(typeNumber, ecLevel) {
+    var t = getRSBlockTable(typeNumber, ecLevel);
+    if (t === undefined) throw new Error("bad rs block @ typeNumber:" + typeNumber + "/ecLevel:" + ecLevel);
+    var length = t.length / 3, list = [];
+    for (var i = 0; i < length; i++) {
+      var count = t[i*3+0], totalCount = t[i*3+1], dataCount = t[i*3+2];
+      for (var j = 0; j < count; j++) list.push(RSBlock(totalCount, dataCount));
+    }
+    return list;
+  }
+
+  // --- BitBuffer ---
+  function BitBuffer() {
+    var buffer = [], length = 0;
+    return {
+      getBuffer: function() { return buffer; },
+      put: function(num, bits) {
+        for (var i = 0; i < bits; i++) this.putBit(((num >>> (bits - i - 1)) & 1) === 1);
+      },
+      getLengthInBits: function() { return length; },
+      putBit: function(bit) {
+        var byteIdx = Math.floor(length / 8);
+        if (buffer.length <= byteIdx) buffer.push(0);
+        if (bit) buffer[byteIdx] |= 0x80 >>> (length % 8);
+        length++;
+      }
+    };
+  }
+
+  // --- 8-bit Byte data ---
+  function Byte8Data(str) {
+    if (typeof str !== "string") throw new Error("byte string is required.");
+    var bytes = [];
+    for (var i = 0; i < str.length; i++) {
+      var c = str.charCodeAt(i);
+      if (c < 128) bytes.push(c);
+      else if (c < 2048) { bytes.push(192 | (c >> 6)); bytes.push(128 | (c & 63)); }
+      else if (c < 55296 || c >= 57344) {
+        bytes.push(224 | (c >> 12)); bytes.push(128 | ((c >> 6) & 63)); bytes.push(128 | (c & 63));
+      } else {
+        i++;
+        c = 65536 + (((c & 1023) << 10) | (str.charCodeAt(i) & 1023));
+        bytes.push(240 | (c >> 18)); bytes.push(128 | ((c >> 12) & 63));
+        bytes.push(128 | ((c >> 6) & 63)); bytes.push(128 | (c & 63));
+      }
+    }
+    return {
+      getMode: function() { return 4; },
+      getLength: function() { return bytes.length; },
+      write: function(buf) { for (var i = 0; i < bytes.length; i++) buf.put(bytes[i], 8); }
+    };
+  }
+
+  // --- createData / createBytes ---
+  function createData(typeNumber, ecLevel, dataList) {
+    var rsBlocks = getRSBlocks(typeNumber, ecLevel);
+    var buf = BitBuffer();
+    for (var i = 0; i < dataList.length; i++) {
+      var d = dataList[i];
+      buf.put(d.getMode(), 4);
+      buf.put(d.getLength(), getLengthInBits(d.getMode(), typeNumber));
+      d.write(buf);
+    }
+    var totalDataCount = 0;
+    for (var i = 0; i < rsBlocks.length; i++) totalDataCount += rsBlocks[i].dataCount;
+    if (buf.getLengthInBits() > totalDataCount * 8)
+      throw new Error("code length overflow. (" + buf.getLengthInBits() + ">" + (totalDataCount * 8) + ")");
+    if (buf.getLengthInBits() + 4 <= totalDataCount * 8) buf.put(0, 4);
+    while (buf.getLengthInBits() % 8 !== 0) buf.putBit(false);
+    while (true) {
+      if (buf.getLengthInBits() >= totalDataCount * 8) break;
+      buf.put(0xEC, 8);
+      if (buf.getLengthInBits() >= totalDataCount * 8) break;
+      buf.put(0x11, 8);
+    }
+    return createBytes(buf, rsBlocks);
+  }
+  function createBytes(buf, rsBlocks) {
+    var offset = 0, maxDc = 0, maxEc = 0;
+    var dcdata = new Array(rsBlocks.length), ecdata = new Array(rsBlocks.length);
+    for (var r = 0; r < rsBlocks.length; r++) {
+      var dcCount = rsBlocks[r].dataCount;
+      var ecCount = rsBlocks[r].totalCount - dcCount;
+      maxDc = Math.max(maxDc, dcCount);
+      maxEc = Math.max(maxEc, ecCount);
+      dcdata[r] = new Array(dcCount);
+      for (var i = 0; i < dcdata[r].length; i++) dcdata[r][i] = 0xFF & buf.getBuffer()[i + offset];
+      offset += dcCount;
+      var ecPoly = getErrorCorrectPolynomial(ecCount);
+      var rawPoly = Poly(dcdata[r], ecPoly.getLength() - 1);
+      var modPoly = rawPoly.mod(ecPoly);
+      ecdata[r] = new Array(ecPoly.getLength() - 1);
+      for (var i = 0; i < ecdata[r].length; i++) {
+        var idx = i + modPoly.getLength() - ecdata[r].length;
+        ecdata[r][i] = idx >= 0 ? modPoly.getAt(idx) : 0;
+      }
+    }
+    var totalCodeCount = 0;
+    for (var i = 0; i < rsBlocks.length; i++) totalCodeCount += rsBlocks[i].totalCount;
+    var data = new Array(totalCodeCount), index = 0;
+    for (var i = 0; i < maxDc; i++)
+      for (var r = 0; r < rsBlocks.length; r++)
+        if (i < dcdata[r].length) data[index++] = dcdata[r][i];
+    for (var i = 0; i < maxEc; i++)
+      for (var r = 0; r < rsBlocks.length; r++)
+        if (i < ecdata[r].length) data[index++] = ecdata[r][i];
+    return data;
+  }
+
+  // --- QRCode constructor ---
+  return function(typeNumber, ecLevelName) {
+    var _typeNumber = typeNumber;
+    var _ecLevel = ECLevel[ecLevelName];
+    var modules = null, moduleCount = 0, dataCache = null, dataList = [];
+
+    function makeModulesArray(n) {
+      var arr = new Array(n);
+      for (var i = 0; i < n; i++) { arr[i] = new Array(n); for (var j = 0; j < n; j++) arr[i][j] = null; }
+      return arr;
+    }
+    function setupPositionProbe(row, col) {
+      for (var r = -1; r <= 7; r++) {
+        if (row + r <= -1 || moduleCount <= row + r) continue;
+        for (var c = -1; c <= 7; c++) {
+          if (col + c <= -1 || moduleCount <= col + c) continue;
+          modules[row+r][col+c] =
+            (0 <= r && r <= 6 && (c === 0 || c === 6)) ||
+            (0 <= c && c <= 6 && (r === 0 || r === 6)) ||
+            (2 <= r && r <= 4 && 2 <= c && c <= 4);
+        }
+      }
+    }
+    function setupTimingPattern() {
+      for (var r = 8; r < moduleCount - 8; r++) if (modules[r][6] == null) modules[r][6] = (r % 2 === 0);
+      for (var c = 8; c < moduleCount - 8; c++) if (modules[6][c] == null) modules[6][c] = (c % 2 === 0);
+    }
+    function setupPositionAdjustPattern() {
+      var pos = getPatternPosition(_typeNumber);
+      for (var i = 0; i < pos.length; i++) for (var j = 0; j < pos.length; j++) {
+        var row = pos[i], col = pos[j];
+        if (modules[row][col] != null) continue;
+        for (var r = -2; r <= 2; r++) for (var c = -2; c <= 2; c++)
+          modules[row+r][col+c] = (r === -2 || r === 2 || c === -2 || c === 2 || (r === 0 && c === 0));
+      }
+    }
+    function setupTypeNumber(test) {
+      var bits = getBCHTypeNumber(_typeNumber);
+      for (var i = 0; i < 18; i++) {
+        var mod = !test && ((bits >> i) & 1) === 1;
+        modules[Math.floor(i/3)][i % 3 + moduleCount - 8 - 3] = mod;
+      }
+      for (var i = 0; i < 18; i++) {
+        var mod = !test && ((bits >> i) & 1) === 1;
+        modules[i % 3 + moduleCount - 8 - 3][Math.floor(i/3)] = mod;
+      }
+    }
+    function setupTypeInfo(test, maskPattern) {
+      var data = (_ecLevel << 3) | maskPattern;
+      var bits = getBCHTypeInfo(data);
+      for (var i = 0; i < 15; i++) {
+        var mod = !test && ((bits >> i) & 1) === 1;
+        if (i < 6) modules[i][8] = mod;
+        else if (i < 8) modules[i+1][8] = mod;
+        else modules[moduleCount - 15 + i][8] = mod;
+      }
+      for (var i = 0; i < 15; i++) {
+        var mod = !test && ((bits >> i) & 1) === 1;
+        if (i < 8) modules[8][moduleCount - i - 1] = mod;
+        else if (i < 9) modules[8][15 - i - 1 + 1] = mod;
+        else modules[8][15 - i - 1] = mod;
+      }
+      modules[moduleCount - 8][8] = !test;
+    }
+    function mapData(data, maskPattern) {
+      var inc = -1, row = moduleCount - 1, bitIdx = 7, byteIdx = 0;
+      var maskFn = getMaskFunction(maskPattern);
+      for (var col = moduleCount - 1; col > 0; col -= 2) {
+        if (col === 6) col--;
+        while (true) {
+          for (var c = 0; c < 2; c++) {
+            if (modules[row][col - c] == null) {
+              var dark = false;
+              if (byteIdx < data.length) dark = ((data[byteIdx] >>> bitIdx) & 1) === 1;
+              if (maskFn(row, col - c)) dark = !dark;
+              modules[row][col - c] = dark;
+              bitIdx--;
+              if (bitIdx === -1) { byteIdx++; bitIdx = 7; }
+            }
+          }
+          row += inc;
+          if (row < 0 || moduleCount <= row) { row -= inc; inc = -inc; break; }
+        }
+      }
+    }
+    function makeImpl(test, maskPattern) {
+      moduleCount = _typeNumber * 4 + 17;
+      modules = makeModulesArray(moduleCount);
+      setupPositionProbe(0, 0);
+      setupPositionProbe(moduleCount - 7, 0);
+      setupPositionProbe(0, moduleCount - 7);
+      setupPositionAdjustPattern();
+      setupTimingPattern();
+      setupTypeInfo(test, maskPattern);
+      if (_typeNumber >= 7) setupTypeNumber(test);
+      if (dataCache == null) dataCache = createData(_typeNumber, _ecLevel, dataList);
+      mapData(dataCache, maskPattern);
+    }
+    function getBestMaskPattern() {
+      var minLostPoint = 0, bestPattern = 0;
+      for (var i = 0; i < 8; i++) {
+        makeImpl(true, i);
+        var lost = getLostPoint(self);
+        if (i === 0 || minLostPoint > lost) { minLostPoint = lost; bestPattern = i; }
+      }
+      return bestPattern;
+    }
+
+    var self = {};
+    self.addData = function(data) { dataList.push(Byte8Data(data)); dataCache = null; };
+    self.isDark = function(row, col) {
+      if (row < 0 || moduleCount <= row || col < 0 || moduleCount <= col)
+        throw new Error(row + "," + col);
+      return modules[row][col];
+    };
+    self.getModuleCount = function() { return moduleCount; };
+    self.make = function() {
+      if (_typeNumber < 1) {
+        var t;
+        for (t = 1; t < 40; t++) {
+          var rsBlocks = getRSBlocks(t, _ecLevel);
+          var buf = BitBuffer();
+          for (var i = 0; i < dataList.length; i++) {
+            var d = dataList[i];
+            buf.put(d.getMode(), 4);
+            buf.put(d.getLength(), getLengthInBits(d.getMode(), t));
+            d.write(buf);
+          }
+          var totalDataCount = 0;
+          for (var i = 0; i < rsBlocks.length; i++) totalDataCount += rsBlocks[i].dataCount;
+          if (buf.getLengthInBits() <= totalDataCount * 8) break;
+        }
+        _typeNumber = t;
+      }
+      makeImpl(false, getBestMaskPattern());
+    };
+    return self;
+  };
+})();
+</script>
+
+<script>
+  // ===========================================================
+  // KONFIGURASI
+  // ===========================================================
+  // Payload QRIS statis kamu (string lengkap dari QR asli):
+  const QRIS_STATIC = "00020101021126610014COM.GO-JEK.WWW01189360091439234344340210G9234344340303UMI51440014ID.CO.QRIS.WWW0215ID10254525086540303UMI5204899953033605802ID5925digikom HG, Digital & Kre6011KOTA BEKASI61051715862070703A01630482E2";
+
+  const MERCHANT_NAME = "Hamizan Gholib (digikom HG, Digital & Kreatif)";
+
+  function buildWaMessage(amountFormatted, note) {
+    let msg = "Halo! 😊\n\n";
+    msg += "Berikut tagihan pembayaran untuk kamu:\n\n";
+    msg += "💰 Jumlah: " + amountFormatted + "\n";
+    if (note && note.trim()) msg += "📝 Keterangan: " + note.trim() + "\n";
+    msg += "\nTerima kasih! 🙏";
+    return msg;
+  }
+  // ===========================================================
+
+  // ---------- CRC16-CCITT (poly 0x1021, init 0xFFFF) ----------
+  function crc16(str) {
+    let crc = 0xFFFF;
+    for (let i = 0; i < str.length; i++) {
+      crc ^= str.charCodeAt(i) << 8;
+      for (let j = 0; j < 8; j++) {
+        crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) : (crc << 1);
+        crc &= 0xFFFF;
+      }
+    }
+    return crc.toString(16).toUpperCase().padStart(4, "0");
+  }
+
+  // ---------- Bangun payload dinamis ----------
+  function buildDynamicPayload(amount) {
+    // 1) Buang CRC lama (tag 6304 + 4 char) dari akhir
+    let p = QRIS_STATIC;
+    const crcIdx = p.lastIndexOf("6304");
+    if (crcIdx !== -1 && crcIdx === p.length - 8) {
+      p = p.substring(0, crcIdx);
+    }
+    // 2) Ubah tag 01 dari 11 (statis) → 12 (dinamis)
+    //    Format: "010211" → "010212"
+    p = p.replace(/^(00020101)02(\d{2})/, function(m, head, val){
+      return head + "0212";
+    });
+    // 3) Sisipkan tag 54 (transaction amount) tepat sebelum tag 5802
+    const amtStr = String(amount);
+    const tag54 = "54" + String(amtStr.length).padStart(2, "0") + amtStr;
+    const i58 = p.indexOf("5802");
+    if (i58 === -1) throw new Error("Tag 5802 tidak ditemukan di payload QRIS");
+    p = p.substring(0, i58) + tag54 + p.substring(i58);
+    // 4) Tambahkan CRC baru
+    const withCrcMarker = p + "6304";
+    const crc = crc16(withCrcMarker);
+    return withCrcMarker + crc;
+  }
+
+  // ---------- Render QR ke canvas ----------
+  function renderQR(text) {
+    const canvas = document.getElementById("qr-canvas");
+    // typeNumber 0 = auto-detect, error correction L cukup utk QRIS
+    const qr = qrcode(0, "L");
+    qr.addData(text);
+    qr.make();
+    const count = qr.getModuleCount();
+    const scale = 8;
+    const margin = 4;
+    const size = (count + margin * 2) * scale;
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, size, size);
+    ctx.fillStyle = "#000";
+    for (let r = 0; r < count; r++) {
+      for (let c = 0; c < count; c++) {
+        if (qr.isDark(r, c)) {
+          ctx.fillRect((c + margin) * scale, (r + margin) * scale, scale, scale);
+        }
+      }
+    }
+    canvas.style.display = "block";
+    document.getElementById("qr-placeholder").style.display = "none";
+  }
+
+  // ---------- UI ----------
+  const amountInput = document.getElementById("amount");
+  const noteInput = document.getElementById("note");
+  const errorEl = document.getElementById("error");
+  const btnGenerate = document.getElementById("btn-generate");
+  const btnShare = document.getElementById("btn-share");
+  const btnCopy = document.getElementById("btn-copy");
+  const actionsAfter = document.getElementById("actions-after-qr");
+  const qrAmountEl = document.getElementById("qr-amount");
+  const qrNoteEl = document.getElementById("qr-note");
+  const toast = document.getElementById("toast");
+
+  function formatRupiah(num) {
+    if (!num) return "Rp 0";
+    return "Rp " + Number(num).toLocaleString("id-ID");
+  }
+  function getRawAmount() {
+    const d = amountInput.value.replace(/\D/g, "");
+    return d ? parseInt(d, 10) : 0;
+  }
+  amountInput.addEventListener("input", () => {
+    const d = amountInput.value.replace(/\D/g, "");
+    amountInput.value = d ? parseInt(d, 10).toLocaleString("id-ID") : "";
+    errorEl.textContent = "";
+  });
+
+  let currentAmount = 0;
+  let currentNote = "";
+
+  btnGenerate.addEventListener("click", () => {
+    const amt = getRawAmount();
+    if (!amt || amt <= 0) {
+      errorEl.textContent = "Mohon isi jumlah pembayaran terlebih dahulu.";
+      amountInput.focus();
+      return;
+    }
+    try {
+      const payload = buildDynamicPayload(amt);
+      renderQR(payload);
+      currentAmount = amt;
+      currentNote = noteInput.value;
+      qrAmountEl.textContent = formatRupiah(amt);
+      qrAmountEl.style.display = "block";
+      qrNoteEl.textContent = currentNote.trim() ? currentNote.trim() : "";
+      actionsAfter.classList.add("shown");
+      errorEl.textContent = "";
+    } catch (e) {
+      errorEl.textContent = "Gagal membuat QR: " + e.message;
+    }
+  });
+
+  function showToast(text) {
+    toast.textContent = text;
+    toast.classList.add("show");
+    setTimeout(() => toast.classList.remove("show"), 1800);
+  }
+
+  // Ubah canvas QR jadi File PNG (untuk Web Share API)
+  function canvasToFile() {
+    return new Promise((resolve) => {
+      const canvas = document.getElementById("qr-canvas");
+      canvas.toBlob((blob) => {
+        resolve(new File([blob], "qris-" + currentAmount + ".png", { type: "image/png" }));
+      }, "image/png");
+    });
+  }
+
+  btnShare.addEventListener("click", async () => {
+    const msg = buildWaMessage(formatRupiah(currentAmount), currentNote);
+    const file = await canvasToFile();
+
+    // 1) Coba Web Share API dengan gambar (didukung di HP modern → bisa pilih WhatsApp)
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], text: msg });
+        return;
+      } catch (e) {
+        if (e && e.name === "AbortError") return; // user batal, jangan fallback
+      }
+    }
+
+    // 2) Fallback (mis. desktop): unduh gambar QR + buka WhatsApp dengan teks
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(file);
+    a.download = file.name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+    showToast("QR diunduh — lampirkan ke WhatsApp ✓");
+    window.open("https://wa.me/?text=" + encodeURIComponent(msg), "_blank");
+  });
+
+  btnCopy.addEventListener("click", async () => {
+    const msg = buildWaMessage(formatRupiah(currentAmount), currentNote);
+    try {
+      await navigator.clipboard.writeText(msg);
+      showToast("Pesan disalin! ✓");
+    } catch (e) {
+      const ta = document.createElement("textarea");
+      ta.value = msg;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); showToast("Pesan disalin! ✓"); }
+      catch (_) { showToast("Gagal menyalin"); }
+      document.body.removeChild(ta);
+    }
+  });
+</script>
+</body>
+</html>
