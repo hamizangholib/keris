@@ -689,7 +689,7 @@ var qrcode = (function() {
   }
 
   btnShare.addEventListener("click", async () => {
-    const msg = buildWaMessage(formatRupiah(currentAmount), currentNote);
+    const msg = buildWaMessage(formatRupiah(currentAmount), noteInput.value);
     const file = await canvasToFile();
 
     // 1) Coba Web Share API dengan gambar (didukung di HP modern → bisa pilih WhatsApp)
@@ -715,7 +715,7 @@ var qrcode = (function() {
   });
 
   btnCopy.addEventListener("click", async () => {
-    const msg = buildWaMessage(formatRupiah(currentAmount), currentNote);
+    const msg = buildWaMessage(formatRupiah(currentAmount), noteInput.value);
     try {
       await navigator.clipboard.writeText(msg);
       showToast("Pesan disalin! ✓");
